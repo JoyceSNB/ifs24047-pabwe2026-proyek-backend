@@ -1,0 +1,8 @@
+node_modules
+coverage
+.env
+data/*.db
+data/*.db-*
+*.log
+.trivy-cache
+latest-app.zip
