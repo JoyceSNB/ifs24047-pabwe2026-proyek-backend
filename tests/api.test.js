@@ -220,3 +220,73 @@ describe("PUT & DELETE (hanya pemilik)", () => {
     expect((await api.get("/api/recipes")).status).toBe(500);
   });
 });
+
+describe("foto profil (avatar)", () => {
+  const upload = (t = token, file = { buffer: PNG, name: "a.png", type: "image/png" }) => {
+    let r = api.put("/api/auth/avatar").set(bearer(t));
+    if (file) r = r.attach("image", file.buffer, { filename: file.name, contentType: file.type });
+    return r;
+  };
+  it("unggah foto lalu foto bisa diambil publik", async () => {
+    const res = await upload();
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.id).toBe(me.id);
+    const img = await api.get(`/api/users/${me.id}/avatar`);
+    expect(img.status).toBe(200);
+    expect(img.headers["content-type"]).toMatch(/image\/png/);
+    expect(img.body.equals(PNG)).toBe(true);
+  });
+  it("foto belum ada atau pengguna tidak ada -> 404", async () => {
+    expect((await api.get(`/api/users/${me.id}/avatar`)).status).toBe(404);
+    expect((await api.get("/api/users/9999/avatar")).status).toBe(404);
+  });
+  it("unggah tanpa file -> 400, tanpa login -> 401", async () => {
+    const noFile = await upload(token, null);
+    expect(noFile.status).toBe(400);
+    expect(noFile.body.message).toMatch(/wajib/);
+    expect((await api.put("/api/auth/avatar")).status).toBe(401);
+  });
+  it("akun sudah dihapus -> 401 saat unggah dan hapus foto", async () => {
+    db.prepare("DELETE FROM users WHERE id = ?").run(me.id);
+    expect((await upload()).status).toBe(401);
+    expect((await api.delete("/api/auth/avatar").set(bearer())).status).toBe(401);
+  });
+  it("hapus foto mengosongkan avatar", async () => {
+    await upload();
+    const del = await api.delete("/api/auth/avatar").set(bearer());
+    expect(del.status).toBe(200);
+    expect(del.body.message).toMatch(/dihapus/);
+    expect((await api.get(`/api/users/${me.id}/avatar`)).status).toBe(404);
+  });
+});
+
+describe("migrasi kolom foto profil", () => {
+  it("tabel users lama ditambah kolom avatar tanpa menghapus akun", () => {
+    const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "db-")), "u.db");
+    const old = new Database(f);
+    old.exec("CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL); INSERT INTO users(name, email, password_hash) VALUES ('Lama', 'lama@mail.com', 'x');");
+    old.close();
+    const migrated = createDb(f);
+    const cols = migrated.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+    expect(cols).toEqual(expect.arrayContaining(["avatar_data", "avatar_type", "avatar_updated"]));
+    expect(migrated.prepare("SELECT COUNT(*) n FROM users WHERE email = 'lama@mail.com'").get().n).toBe(1);
+    migrated.close();
+  });
+});
+
+describe("konfigurasi secret JWT", () => {
+  it("memakai JWT_SECRET dari environment bila ada, dan nilai bawaan bila tidak", async () => {
+    const old = process.env.JWT_SECRET;
+    try {
+      for (const secret of ["secret-dari-env", undefined]) {
+        if (secret) process.env.JWT_SECRET = secret; else delete process.env.JWT_SECRET;
+        const app = request(createApp(createDb(":memory:")));
+        const reg = await app.post("/api/auth/register").send({ name: "Uji", email: `${secret || "bawaan"}@mail.com`, password: "rahasia123" });
+        const t = reg.body.data.token;
+        expect((await app.get("/api/auth/me").set(bearer(t))).status).toBe(200);
+      }
+    } finally {
+      if (old === undefined) delete process.env.JWT_SECRET; else process.env.JWT_SECRET = old;
+    }
+  });
+});
