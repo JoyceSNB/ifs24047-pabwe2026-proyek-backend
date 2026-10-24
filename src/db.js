@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { openDatabase } from "./driver.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -50,13 +50,13 @@ CREATE INDEX IF NOT EXISTS idx_recipes_category ON recipes(category_id);
 /** Membuka database SQLite (file atau ":memory:") dan menyiapkan skema tabel. */
 export function createDb(file = ":memory:") {
   if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new Database(file);
+  const db = openDatabase(file);
   // Skema versi lama (tanpa user_id) dibuang; data awal akan di-seed ulang.
   const cols = db.prepare("PRAGMA table_info(recipes)").all();
   if (cols.length > 0 && !cols.some((c) => c.name === "user_id")) {
     db.exec("DROP TABLE steps; DROP TABLE ingredients; DROP TABLE recipes; DROP TABLE categories;");
   }
-  db.pragma("foreign_keys = ON");
+  db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA);
   // Tabel users dari versi sebelumnya: tambahkan kolom foto profil tanpa menghapus akun.
   if (!db.prepare("PRAGMA table_info(users)").all().some((c) => c.name === "avatar_data")) {
